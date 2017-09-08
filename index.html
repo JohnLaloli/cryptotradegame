@@ -55,8 +55,7 @@
     orderValue: 0,
     funds: [],
     total_usd: 0,
-    orders: [],
-	filename:"portfolio.save",
+    orders: [],	
   };
 
   var portfolio = clone(startPortfolio);
@@ -102,16 +101,10 @@
   function showTotals() {
     var table = createTable(
       [
-        ["<b>Portfolio value</b>", ""],
-        ["$" + portfolio.total_usd.format(2), "USD"],
-        ["", ""],
-        ["" + (portfolio.total_btc).format(4), "BTC"],
-        ["<b>Cash</b>", ""],
-        ["$" + (portfolio.fiat - portfolio.orderValue).format(2), "USD"],
-        ["<b>Orders</b>", ""],
-        ["$" + (portfolio.orderValue).format(2), "USD"],
-        ["<b>Total</b>", ""],
-        ["$" + (portfolio.total_usd + portfolio.fiat).format(2), "USD"],
+        ["<b>Portfolio value</b>", "$" + portfolio.total_usd.format(2)],
+        ["<b>Cash</b>", "$" + (portfolio.fiat - portfolio.orderValue).format(2)],
+        ["<b>Orders</b>", "$" + (portfolio.orderValue).format(2)],
+        ["<b>Total</b>", "$" + (portfolio.total_usd + portfolio.fiat).format(2)],
       ]);
 
     table.style.width = "300px";
