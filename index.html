@@ -1,0 +1,590 @@
+<title>Crypto Trade Game</title>
+
+<script>
+  function fetch(url, callback) {
+    var xhttp = new XMLHttpRequest();
+    xhttp.onreadystatechange = function() {
+      if (this.readyState == 4 && this.status == 200) {
+        callback(this.responseText);
+      }
+    };
+    xhttp.open("GET", url, true);
+    xhttp.send();
+  }
+
+  Number.prototype.format = function(n, x) {
+    var re = '\\d(?=(\\d{' + (x || 3) + '})+' + (n > 0 ? '\\.' : '$') + ')';
+    return this.toFixed(Math.max(0, ~~n)).replace(new RegExp(re, 'g'), '$&,');
+  };
+
+  function createTable(tableData) {
+    var table = document.createElement('table');
+    var tableBody = document.createElement('tbody');
+
+    tableData.forEach(function(rowData) {
+      var row = document.createElement('tr');
+
+      rowData.forEach(function(cellData) {
+        var cell = document.createElement('td');
+        cell.innerHTML = cellData;
+        row.appendChild(cell);
+      });
+
+      tableBody.appendChild(row);
+    });
+
+    table.appendChild(tableBody);
+    return table;
+  }
+
+  function htmlNode(str) {
+    var obj = document.createElement("obj");
+    obj.innerHTML = str;
+    return obj;
+  }
+
+  function clone(obj) {
+    return JSON.parse(JSON.stringify(obj));
+  }
+
+  var data = {};
+  var map = {};
+
+  var startPortfolio = {
+    fiat: 1000,
+    orderValue: 0,
+    funds: [],
+    total_usd: 0,
+    orders: [],
+	filename:"portfolio.save",
+  };
+
+  var portfolio = clone(startPortfolio);
+
+  function showPortfolio() {
+    var t = [];
+
+    portfolio.funds.forEach(function(item) {
+      if (typeof item.price_usd == "undefined" || item.value_usd < 0.0001) return;
+      t.push(
+        [
+          "<button onclick='selectSell(\"" + item.id + "\")'>sell</button> " + item.id,
+          "$" + item.price_usd.format(2),
+          (item.price_usd / map["bitcoin"]["price_usd"]).format(6),
+          item.funds.format(2),
+          "$" + item.value_usd.format(2),
+          (item.value_usd / map["bitcoin"]["price_usd"]).format(4),
+          (parseFloat(item.value_usd) / parseFloat(portfolio.total_usd)) * 100
+        ]);
+    });
+
+    t.sort(function(a, b) {
+      return b[6] - a[6];
+    });
+
+    t.forEach(function(item, index, array) {
+      item[6] = parseFloat(item[6]).format(2) + "%";
+    });
+
+    t.unshift(["Currency", "Price USD", "Price BTC", "Funds", "Value", "BTC value", ""]);
+
+    var table1 = createTable(t);
+    table1.style.width = "100%";
+
+    var o = document.getElementById("output");
+    o.appendChild(table1);
+    if (portfolio.funds.length > 0) {
+      o.appendChild(htmlNode("<br><button id='loadbtn' onclick='fetchData()'>Update valuations</button>"));
+    }
+    o.appendChild(htmlNode("<br><br>"));
+  }
+
+  function showTotals() {
+    var table = createTable(
+      [
+        ["<b>Portfolio value</b>", ""],
+        ["$" + portfolio.total_usd.format(2), "USD"],
+        ["", ""],
+        ["" + (portfolio.total_btc).format(4), "BTC"],
+        ["<b>Cash</b>", ""],
+        ["$" + (portfolio.fiat - portfolio.orderValue).format(2), "USD"],
+        ["<b>Orders</b>", ""],
+        ["$" + (portfolio.orderValue).format(2), "USD"],
+        ["<b>Total</b>", ""],
+        ["$" + (portfolio.total_usd + portfolio.fiat).format(2), "USD"],
+      ]);
+
+    table.style.width = "300px";
+
+    var o = document.getElementById("output");
+    o.appendChild(table);
+    o.appendChild(htmlNode("<br><br>"));
+  }
+
+  function cancelOrder(index) {
+    if (index >= 0 && index <= portfolio.orders.length) {
+      portfolio.orders.splice(index, 1);
+      calculateOrderValue();
+      update();
+    }
+  }
+
+  function addCurrency(id, tokens) {
+    console.log("adding " + tokens + " " + id + "  to portfolio");
+
+    for (var i = 0; i < portfolio.funds.length; i++) {
+      if (portfolio.funds[i].id == id) {
+        portfolio.funds[i].funds += tokens;
+        update();
+        return portfolio;
+      }
+    }
+
+    portfolio.funds.push({
+      id: id,
+      funds: tokens
+    });
+    return portfolio;
+  }
+  
+ function subtractCurrency(id, tokens) {
+    console.log("adding " + tokens + " " + id + "  to portfolio");
+
+    for (var i = 0; i < portfolio.funds.length; i++) {
+      if (portfolio.funds[i].id == id) {
+        portfolio.funds[i].funds -= tokens;
+        update();
+        return portfolio;
+      }
+    }
+  }
+
+  function finalizeOrders() {
+    portfolio.orders.forEach(function(item, index) {
+      if (portfolio.fiat == 0) return;
+
+      //if (typeof item.limit != "undefined") 
+	  			
+		if(item.buy == true) {
+					
+			var value = item.value;
+
+			if (value > portfolio.fiat) value = portfolio.fiat;
+
+			// volume limit ??
+
+			item.value -= value;
+			portfolio.fiat -= value;
+
+			var tokens = value / map[item.id].price_usd;
+
+			addCurrency(item.id, tokens);
+		}
+		else {
+		
+			console.log("prosessing sell order: " + item.id);
+		
+			var value = item.value;
+			var balance = getTokenBalance(item.id);
+			
+			if (value > balance) value = balance;
+			
+			item.value -= value;
+			portfolio.fiat += value * map[item.id].price_usd;	
+
+			subtractCurrency(item.id, value);		
+		}
+      
+    });
+
+    portfolio.orders = portfolio.orders.filter(function(item) {
+      return item.value > 0;
+    });
+
+    updatePortfolioValues();
+    calculateOrderValue();
+    update();
+  }
+
+  function executeOrders() {
+    fetchData(finalizeOrders);
+  }
+
+  function showOrders() {
+
+    if (portfolio.orders.length == 0) return;
+
+    var t = [];
+
+    portfolio.orders.forEach(function(item, index) {
+
+      if (item.buy) {
+        t.push(["Buy", item.id, "$" + item.value.format(2), "<button onclick='cancelOrder(\"" + index + "\")'>-</button>"]);
+      } else {
+        t.push(["Sell", item.id, item.value + " tokens", "<button onclick='cancelOrder(\"" + index + "\")'>-</button>"]);
+      }
+    });
+
+    var table = createTable(t);
+
+    table.style.width = "300px";
+
+    var o = document.getElementById("output");
+    o.appendChild(htmlNode("<b>Orders:</b>"));
+    o.appendChild(table);
+    o.appendChild(htmlNode("<br><button onclick='executeOrders()'>Execute orders</button>"));
+    o.appendChild(htmlNode("<br><br>"));
+  }
+
+  function clearOutputDiv() {
+    document.getElementById("output").innerHTML = ""
+  }
+
+  function update() {
+    localStorage.setItem('portfolio', JSON.stringify(portfolio)); // save portfolio in local storage
+
+    updatePortfolioValues();
+
+    clearOutputDiv();
+    showPortfolio();
+    showTotals();
+    showOrders();
+  }
+
+  function calculateOrderValue() {
+    portfolio.orderValue = 0;
+
+    portfolio.orders.forEach(function(item, index) {
+      portfolio.orderValue += item.value;
+    });
+  }
+
+  function getTokenBalance(id) {
+    var balance = 0;
+    portfolio.funds.forEach(function(item, index) {
+      if (item.id == id) balance += item.funds;
+    });
+    return balance;
+  }
+
+  function getTokenSellOrderValue(id) {
+    var value = 0;
+
+    portfolio.orders.forEach(function(item, index) {
+      if (item.buy == false && item.id == id) {
+        value += item.value;
+      }
+    });
+
+    return value;
+  }
+
+  function placeOrder() {
+    var val = parseFloat(document.getElementById('buyValue').value);
+    if (isNaN(val)) return;
+
+    var msg = "";
+
+    if (val > 0) {
+
+      var balance = 0;
+
+      if (placeOrder.buy) balance = portfolio.fiat - portfolio.orderValue;
+      else balance = getTokenBalance(placeOrder.id) - getTokenSellOrderValue(placeOrder.id);
+
+      if (val > balance) {
+        msg = "<obj class='warningMSG'>Insufficient funds</obj>";
+        document.getElementById('buyValue').value = balance;
+      } else {
+        portfolio.orders.push({
+          buy: placeOrder.buy,
+          id: placeOrder.id,
+          value: val
+        });
+        calculateOrderValue();
+        update();
+      }
+    }
+
+    document.getElementById('orderMSG').innerHTML = msg;
+  }
+
+  function selectBuy(id) {
+
+    placeOrder.id = id;
+    placeOrder.buy = true;
+
+    var modal = document.getElementById('myModal');
+    modal.style.display = "block";
+
+    var modelText = document.getElementById('modelText');
+
+    modelText.innerHTML = id + " $" + map[id].price_usd;
+    scroll(0, 0);
+
+    document.getElementById('orderMSG').innerHTML = "";
+
+    document.getElementById('modelLabel').innerHTML = "<b>Buy</b> order USD:";
+  }
+
+  function selectSell(id) {
+
+    placeOrder.id = id;
+    placeOrder.buy = false;
+
+    var modal = document.getElementById('myModal');
+    modal.style.display = "block";
+
+    var modelText = document.getElementById('modelText');
+
+    modelText.innerHTML = id + " $" + map[id].price_usd;
+    scroll(0, 0);
+
+    document.getElementById('orderMSG').innerHTML = "";
+
+    document.getElementById('modelLabel').innerHTML = "<b>Sell<b> order tokens:";
+  }
+
+
+  function updateCurrencyList() {
+
+    var tableData = [];
+
+    data.sort(function(a, b) {
+      if (isNaN(parseFloat(b["24h_volume_usd"]))) b["24h_volume_usd"] = 0;
+      if (isNaN(parseFloat(a["24h_volume_usd"]))) a["24h_volume_usd"] = 0;
+
+      return parseFloat(b["24h_volume_usd"]) - parseFloat(a["24h_volume_usd"]);
+    });
+
+    data.forEach(function(item) {
+
+      var price = parseFloat(item.price_usd);
+      if (isNaN(price)) price = "???";
+      else {
+        if (price > 0.01) price = price.format(2);
+        price = "$" + price;
+      }
+      var volume = parseFloat(item["24h_volume_usd"]);
+      if (isNaN(volume)) volume = "???";
+      else volume = "$" + volume.format(2)
+
+      var marketcap = parseFloat(item["market_cap_usd"]);
+      if (isNaN(marketcap)) marketcap = "???";
+      else marketcap = "$" + marketcap.format(2);
+
+      tableData.push(["<button onclick='selectBuy(\"" + item.id + "\")'>buy</button> " + item.id, price, volume, marketcap]);
+    });
+
+    tableData.unshift(["Currency", "Price USD", "Volume", "Marketcap"]);
+
+    var table1 = createTable(tableData);
+
+    var o = document.getElementById("currencyList");
+    o.innerHTML = "";
+    o.appendChild(table1);
+
+    table1.style.width = "100%";
+  }
+
+  function setLoadButtonText(str) {
+    var obj = document.getElementById("loadbtn");
+    if (obj) obj.innerText = str;
+  }
+
+  function updatePortfolioValues() {
+    portfolio.total_usd = 0;
+    portfolio.funds.forEach(function(item) {
+      if (typeof item.modifier === "undefined") {
+        if (typeof map[item.id] == "undefined") return;
+        item.price_usd = parseFloat(map[item.id].price_usd);
+      } else {
+        if (typeof map[item.modifier] == "undefined") return;
+        item.price_usd = parseFloat(map[item.modifier].price_usd) * parseFloat(item.scale);
+      }
+      item.value_usd = item.price_usd * item.funds;
+      portfolio.total_usd += item.value_usd;
+    });
+
+    portfolio.total_btc = portfolio.total_usd / map["bitcoin"]["price_usd"];
+
+  }
+
+  function fetchData(callback) {
+    setLoadButtonText("loading");
+    fetch("https://api.coinmarketcap.com/v1/ticker/?convert=usd", function(result) {
+
+      data = JSON.parse(result);
+
+      data.forEach(function(item) {
+        map[item.id] = item;
+      });
+
+      updatePortfolioValues();
+
+      if (typeof callback !== "undefined") {
+        callback();
+      } else {
+        update();
+      }
+
+      updateCurrencyList();
+      setLoadButtonText("Update valuations");
+      //document.getElementById("optionsStuff").style.visibility = "visible";
+      document.getElementById("loading").style.display = "none";
+    });
+  }
+
+  function newPortfolio() {
+    portfolio = clone(startPortfolio);
+    update();
+    scroll(0, 0);
+  }
+
+  function init() {
+    //document.getElementById("optionsStuff").style.visibility = "hidden";
+
+    portfolio = clone(startPortfolio);
+
+    var p = localStorage.getItem('portfolio');
+    if (p != null) {
+      portfolio = JSON.parse(p);
+	  
+    }
+
+	console.log(JSON.stringify(portfolio));
+			
+    var modal = document.getElementById('myModal');
+    var span = document.getElementsByClassName("close")[0];
+
+    modal.style.display = "none";
+    span.onclick = function() {
+      modal.style.display = "none";
+    }
+
+    fetchData();
+  }
+  
+  function savePortfolio() {
+	var a = document.createElement("a");
+    var file = new Blob([JSON.stringify(portfolio)], {type: 'text/plain'});
+    a.href = URL.createObjectURL(file);
+    a.download = document.getElementById('saveName').value;
+    a.click();	
+	update();
+  }
+  
+  function loadPortfolio() {
+
+    var files = document.getElementById('files').files;
+    if (!files.length) {
+      alert('Please select a file!');
+      return;
+    }
+
+    var file = files[0];
+    var reader = new FileReader();
+	
+	document.getElementById('loadMSG').textContent = "";
+
+    reader.onloadend = function(evt) {
+      if (evt.target.readyState == FileReader.DONE) { 
+		if(evt.target.result[0] != '{') {
+			document.getElementById('loadMSG').textContent = "invalid save file";        
+		}
+        else {
+			portfolio = JSON.parse(evt.target.result);   
+			update();
+			scroll(0,0);
+			
+			if(typeof portfolio.filename != "undefined") {
+				document.getElementById('saveName').value = portfolio.filename;
+			}
+			else document.getElementById('saveName').value = "portfolio.save";
+		}    
+      }
+    };
+
+    reader.readAsBinaryString(file);
+  }
+  
+</script>
+
+<style>
+  /* Modal Content/Box */
+  
+  .modal-content {
+    background-color: #fefefe;
+    margin: 15px;
+    /* 15% from the top and centered */
+    padding: 15px;
+    border: 1px solid #888;
+    width: 80%;
+    /* Could be more or less, depending on screen size */
+    #display: none;
+  }
+  /* The Close Button */
+  
+  .close {
+    color: #aaa;
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+  }
+  
+  .close:hover,
+  .close:focus {
+    color: black;
+    text-decoration: none;
+    cursor: pointer;
+  }
+  
+  .warningMSG {
+    color: red;
+  }
+  
+  .currencyList {
+	height:224px;
+	overflow:auto;
+  }
+
+</style>
+
+<body onload="init()">
+
+  <div id="loading">loading...</div>
+
+  <div id="output"></div>
+
+  <!-- The Modal -->
+  <div id="myModal" class="modal">
+
+    <!-- Modal content -->
+    <div class="modal-content">
+      <span class="close">&times;</span>
+      <p id="modelText"></p>
+      <hr>
+      <obj id="modelLabel"></obj>
+      <input id="buyValue"></input>
+      <button onclick="placeOrder()">add order</button>
+      <!-- input type="checkbox">Price Limit: </input><input id="limitPrice"></input>  <-->
+      <br>
+      <!-- tokens: <obj></obj><br> <-->
+      <div id="orderMSG"></div>
+    </div>
+
+  </div>
+
+  <div id="currencyList" class="currencyList"></div>
+  <hr>
+  <div id="optionsStuff2">
+	<button id="savebtn" onclick="savePortfolio()">Save Portfolio</button> <input id="saveName" value="portfolio.save"/>
+	<obj>
+	  <button for="files" class="btn" onclick="files.click()">Load portfolio</button>
+	  <input type="file" id="files" name="file" style="visibility:hidden;display:none;" onchange="loadPortfolio()"/>	  
+	</obj>
+	<button id="newbtn" onclick="newPortfolio()">New Portfolio</button>
+	<obj id="loadMSG"></obj>
+
+  </div>
+</body>
