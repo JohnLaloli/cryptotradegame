@@ -342,6 +342,8 @@
   function updateCurrencyList() {
 
     var tableData = [];
+	
+	var filter = document.getElementById("filter").value;
 
     data.sort(function(a, b) {
       if (isNaN(parseFloat(b["24h_volume_usd"]))) b["24h_volume_usd"] = 0;
@@ -351,6 +353,10 @@
     });
 
     data.forEach(function(item) {
+	
+	  if(filter != "") {
+		if(item.id.indexOf(filter) == -1) return;
+	  }
 
       var price = parseFloat(item.price_usd);
       if (isNaN(price)) price = "???";
@@ -456,6 +462,11 @@
     }
 
     fetchData();
+	
+	var filter = document.getElementById("filter");
+	filter.addEventListener("input", function (e) {
+		updateCurrencyList();
+	});
   }
   
   function savePortfolio() {
@@ -568,9 +579,12 @@
 
   </div>
 
+
+  
   <div id="currencyList" class="currencyList"></div>
+  <center>Currency filter: <input id="filter"></input></center>	
   <hr>
-  <div id="optionsStuff2">
+  <div id="optionsStuff">
 	<button id="savebtn" onclick="savePortfolio()">Save Portfolio</button> <input id="saveName" value="portfolio.save"/>
 	<obj>
 	  <button for="files" class="btn" onclick="files.click()">Load portfolio</button>
